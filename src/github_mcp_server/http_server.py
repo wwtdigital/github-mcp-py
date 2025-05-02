@@ -16,6 +16,7 @@ from github_mcp_server.models import (
     InitializeParams,
     InitializeResult,
     ServerInfo,
+    Capability,
     ExecuteCommandParams,
     ExecuteCommandResult
 )
@@ -85,6 +86,48 @@ class HttpServer:
                 "description": "GitHub MCP Server (HTTP)"
             }
         
+        @self.app.get("/capabilities")
+        async def get_capabilities():
+            """Get server capabilities and available tools"""
+            # Collect all available capabilities
+            capabilities = [
+                Capability(
+                    name="github",
+                    description="GitHub API integration",
+                    version=self.config.version
+                ),
+                Capability(
+                    name="jsonrpc",
+                    description="JSON-RPC protocol support",
+                    version="2.0"
+                ),
+                Capability(
+                    name="http",
+                    description="HTTP API endpoints",
+                    version="1.0"
+                )
+            ]
+            
+            # Collect all available tools from toolsets
+            available_tools = []
+            for toolset in self.toolsets:
+                toolset_tools = []
+                for tool in toolset.tools:
+                    toolset_tools.append({
+                        "name": tool.name,
+                        "description": tool.description
+                    })
+                available_tools.append({
+                    "name": toolset.name,
+                    "description": toolset.description,
+                    "tools": toolset_tools
+                })
+            
+            return {
+                "capabilities": [cap.dict() for cap in capabilities],
+                "toolsets": available_tools
+            }
+        
         @self.app.post("/initialize")
         async def initialize(params: InitializeParams):
             """Initialize the server"""
@@ -95,13 +138,42 @@ class HttpServer:
                 f"({client_info.name}/{client_info.version})"
             )
             
+            # Collect all available capabilities
+            capabilities = [
+                Capability(
+                    name="github",
+                    description="GitHub API integration",
+                    version=self.config.version
+                ),
+                Capability(
+                    name="jsonrpc",
+                    description="JSON-RPC protocol support",
+                    version="2.0"
+                ),
+                Capability(
+                    name="http",
+                    description="HTTP API endpoints",
+                    version="1.0"
+                )
+            ]
+            
+            # Collect all available tools
+            available_tools = []
+            for toolset in self.toolsets:
+                for tool in toolset.tools:
+                    available_tools.append(tool.name)
+            
             # Prepare and return result
             server_info = ServerInfo(
                 name="github-mcp-server",
                 version=self.config.version
             )
             
-            return InitializeResult(serverInfo=server_info)
+            return InitializeResult(
+                serverInfo=server_info,
+                capabilities=capabilities,
+                availableTools=available_tools
+            )
         
         @self.app.post("/executeCommand")
         async def execute_command(params: ExecuteCommandParams):

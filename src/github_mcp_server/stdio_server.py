@@ -17,6 +17,7 @@ from github_mcp_server.models import (
     InitializeParams, 
     InitializeResult, 
     ServerInfo,
+    Capability,
     ShutdownParams
 )
 from github_mcp_server.github.toolsets import init_toolsets, register_tools
@@ -144,13 +145,42 @@ class StdioServer:
         # Mark as initialized
         self.initialized = True
         
+        # Collect all available capabilities
+        capabilities = [
+            Capability(
+                name="github",
+                description="GitHub API integration",
+                version=self.config.version
+            ),
+            Capability(
+                name="jsonrpc",
+                description="JSON-RPC protocol support",
+                version="2.0"
+            ),
+            Capability(
+                name="stdio",
+                description="Standard IO communication",
+                version="1.0"
+            )
+        ]
+        
+        # Collect all available tools
+        available_tools = []
+        for tool in self.handlers.keys():
+            if not tool.startswith('_') and tool not in ['initialize', 'shutdown']:
+                available_tools.append(tool)
+        
         # Prepare and return result
         server_info = ServerInfo(
             name="github-mcp-server",
             version=self.config.version
         )
         
-        return InitializeResult(serverInfo=server_info)
+        return InitializeResult(
+            serverInfo=server_info,
+            capabilities=capabilities,
+            availableTools=available_tools
+        )
     
     @method
     async def shutdown(self, **params) -> Dict[str, Any]:

@@ -31,9 +31,18 @@ class ServerInfo(BaseModel):
     version: str
 
 
+class Capability(BaseModel):
+    """Server capability"""
+    name: str
+    description: str
+    version: str = "1.0.0"
+
+
 class InitializeResult(BaseModel):
     """Result of initialize request"""
     server_info: ServerInfo = Field(..., alias="serverInfo")
+    capabilities: List[Capability] = Field(default_factory=list, alias="capabilities")
+    available_tools: List[str] = Field(default_factory=list, alias="availableTools")
 
 
 class InitializeResponse(BaseModel):
