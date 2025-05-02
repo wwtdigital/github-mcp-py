@@ -321,7 +321,11 @@ class ContentToolset(GithubToolset):
 
 class ProjectsToolset(GithubToolset):
     """
-    Project management toolset
+    Projects management toolset (GraphQL implementation)
+    
+    This toolset uses the GitHub GraphQL API to interact with the new
+    Projects experience (ProjectsV2) since the classic Projects API
+    has been deprecated.
     """
     
     def __init__(self, github_client: GitHubClient, read_only: bool = False):
@@ -330,7 +334,7 @@ class ProjectsToolset(GithubToolset):
         """
         super().__init__(
             name="projects",
-            description="Project management tools",
+            description="Project management tools (API v2)",
             github_client=github_client,
             read_only=read_only
         )
@@ -338,24 +342,24 @@ class ProjectsToolset(GithubToolset):
         # Add projects tools
         self.add_tool(Tool(
             name="projects.list",
-            description="List projects for a repository"
+            description="List projects in a repository (GraphQL)"
         ))
         
         self.add_tool(Tool(
             name="projects.get_columns",
-            description="Get columns for a project"
+            description="Get status options in a project (GraphQL)"
         ))
         
         self.add_tool(Tool(
             name="projects.get_cards",
-            description="Get cards for a project column"
+            description="Get items with a specific status in a project (GraphQL)"
         ))
         
         # Add write operations if not in read-only mode
         if not read_only:
             self.add_tool(Tool(
                 name="projects.move_card",
-                description="Move a card to a different column in a project"
+                description="Update an item's status in a project (GraphQL)"
             ))
     
     def register_tools(self, server) -> None:
@@ -373,21 +377,21 @@ class ProjectsToolset(GithubToolset):
         server.register_command("projects.get_columns", get_project_columns)
         
         # Register projects.get_cards
-        async def get_project_cards(owner: str, repo: str, project_number: int, column_name: str):
-            return self.github_client.get_project_cards(owner, repo, project_number, column_name)
+        async def get_project_cards(owner: str, repo: str, project_number: int, status_name: str):
+            return self.github_client.get_project_cards(owner, repo, project_number, status_name)
         server.register_command("projects.get_cards", get_project_cards)
         
         # Register write operations if not in read-only mode
         if not self.read_only:
             # Register projects.move_card
             async def move_project_card(owner: str, repo: str, project_number: int, 
-                                   card_id: int, target_column: str, position: str = "top"):
+                                   item_id: str, status_value: str, position: str = "top"):
                 return self.github_client.move_project_card(
                     owner=owner,
                     repo=repo,
                     project_number=project_number,
-                    card_id=card_id,
-                    target_column=target_column,
+                    item_id=item_id,
+                    status_value=status_value,
                     position=position
                 )
             server.register_command("projects.move_card", move_project_card)

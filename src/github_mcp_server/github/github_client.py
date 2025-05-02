@@ -3,11 +3,16 @@ GitHub client implementation for MCP server
 """
 
 from typing import Dict, List, Optional, Any, Union
-import github
+import os
 from github import Github
+from github.Repository import Repository
+from github.Issue import Issue
+from github.PullRequest import PullRequest
 from github.GithubException import GithubException
 from loguru import logger
 
+from ..config import Config
+from .graphql_client import GitHubGraphQLClient
 
 class GitHubClient:
     """
@@ -30,14 +35,16 @@ class GitHubClient:
             personal_access_token: GitHub personal access token
             host: GitHub Enterprise host (optional)
             user_agent: User agent string for API requests
+            mock_mode: Whether to run in mock mode without a real token
         """
         self.token = personal_access_token
         self.host = host
         self.user_agent = user_agent
         self.mock_mode = mock_mode
         self._client = None
+        self._graphql_client = None
         
-        # Initialize GitHub client
+        # Initialize GitHub clients
         self._init_client()
     
     def _init_client(self) -> None:
@@ -60,6 +67,14 @@ class GitHubClient:
                     user_agent=self.user_agent
                 )
             
+            # Initialize GraphQL client using a configuration object that matches what the client expects
+            config = Config()
+            config.github_personal_access_token = self.token
+            config.github_host = self.host
+            config.github_read_only = False  # This will be handled at the toolset level
+            
+            self._graphql_client = GitHubGraphQLClient(config)
+            
             # Test connection by getting authenticated user
             user = self._client.get_user()
             logger.debug(f"GitHub client initialized for user: {user.login}")
@@ -75,6 +90,15 @@ class GitHubClient:
         if not self._client:
             self._init_client()
         return self._client
+    
+    @property
+    def graphql_client(self) -> GitHubGraphQLClient:
+        """
+        Get the GraphQL client instance
+        """
+        if not self._graphql_client:
+            self._init_client()
+        return self._graphql_client
     
     def set_user_agent(self, user_agent: str) -> None:
         """
@@ -228,177 +252,236 @@ class GitHubClient:
     # Project methods
     def get_projects(self, owner: str, repo: str) -> List[Dict[str, Any]]:
         """
-        Get projects for a repository
+        Get projects for a repository using GraphQL API
+        
+        The REST API for classic Projects is deprecated, so we use GraphQL instead.
         """
         try:
-            repository = self.client.get_repo(f"{owner}/{repo}")
+            # Use GraphQL client to get repository projects
+            result = self.graphql_client.list_repository_projects(owner, repo)
+            
+            # Extract projects from the result
             projects = []
-            for project in repository.get_projects():
-                projects.append({
-                    "id": project.id,
-                    "name": project.name,
-                    "body": project.body,
-                    "number": project.number,
-                    "state": project.state,
-                    "html_url": project.html_url,
-                    "created_at": project.created_at.isoformat() if project.created_at else None,
-                    "updated_at": project.updated_at.isoformat() if project.updated_at else None
-                })
+            if result.get('repository', {}).get('projectsV2', {}).get('nodes'):
+                for project in result['repository']['projectsV2']['nodes']:
+                    projects.append({
+                        "id": project.get('id'),
+                        "name": project.get('title'),
+                        "number": project.get('number'),
+                        "body": project.get('shortDescription'),
+                        "state": 'open' if not project.get('closed') else 'closed',
+                        "html_url": project.get('url'),
+                        "created_at": project.get('createdAt'),
+                        "updated_at": project.get('updatedAt')
+                    })
             return projects
-        except GithubException as e:
+        except Exception as e:
             logger.error(f"Failed to get projects for {owner}/{repo}: {e}")
             raise
     
     def get_project_columns(self, owner: str, repo: str, project_number: int) -> List[Dict[str, Any]]:
         """
-        Get columns for a project
+        Get columns for a project using GraphQL API
+        
+        In the new Projects v2, the concept of "columns" is replaced by "fields",
+        specifically a single select field that indicates the status.
         """
         try:
-            repository = self.client.get_repo(f"{owner}/{repo}")
-            project = None
+            # First get the project ID using GraphQL
+            result = self.graphql_client.list_repository_projects(owner, repo)
             
-            # Find the project with the specified number
-            for proj in repository.get_projects():
-                if proj.number == project_number:
-                    project = proj
-                    break
+            project_id = None
+            if result.get('repository', {}).get('projectsV2', {}).get('nodes'):
+                for project in result['repository']['projectsV2']['nodes']:
+                    if project.get('number') == project_number:
+                        project_id = project.get('id')
+                        break
+                        
+            if not project_id:
+                raise ValueError(f"Project {project_number} not found in {owner}/{repo}")
+                
+            # Get project fields
+            fields_result = self.graphql_client.get_project_fields(project_id)
             
-            if project is None:
-                raise ValueError(f"Project number {project_number} not found")
-            
+            # Extract status fields (single select fields)
             columns = []
-            for column in project.get_columns():
-                columns.append({
-                    "id": column.id,
-                    "name": column.name,
-                    "created_at": column.created_at.isoformat() if column.created_at else None,
-                    "updated_at": column.updated_at.isoformat() if column.updated_at else None
-                })
+            if fields_result.get('node', {}).get('fields', {}).get('nodes'):
+                for field in fields_result['node']['fields']['nodes']:
+                    # Only include single select fields, which are like columns in the old projects
+                    if 'options' in field:
+                        for option in field.get('options', []):
+                            columns.append({
+                                "id": option.get('id'),
+                                "name": option.get('name'),
+                                "created_at": None,  # Not available in GraphQL API
+                                "updated_at": None,  # Not available in GraphQL API
+                                "color": option.get('color')
+                            })
+                
             return columns
-        except GithubException as e:
+        except Exception as e:
             logger.error(f"Failed to get columns for project {project_number} in {owner}/{repo}: {e}")
             raise
     
-    def get_project_cards(self, owner: str, repo: str, project_number: int, column_name: str) -> List[Dict[str, Any]]:
+    def get_project_cards(self, owner: str, repo: str, project_number: int, status_name: str) -> List[Dict[str, Any]]:
         """
-        Get cards for a project column
-        """
-        try:
-            repository = self.client.get_repo(f"{owner}/{repo}")
-            project = None
-            
-            # Find the project with the specified number
-            for proj in repository.get_projects():
-                if proj.number == project_number:
-                    project = proj
-                    break
-            
-            if project is None:
-                raise ValueError(f"Project number {project_number} not found")
-            
-            # Find the column with the specified name
-            column = None
-            for col in project.get_columns():
-                if col.name == column_name:
-                    column = col
-                    break
-            
-            if column is None:
-                raise ValueError(f"Column {column_name} not found in project {project_number}")
-            
-            cards = []
-            for card in column.get_cards():
-                card_data = {
-                    "id": card.id,
-                    "note": card.note,
-                    "created_at": card.created_at.isoformat() if card.created_at else None,
-                    "updated_at": card.updated_at.isoformat() if card.updated_at else None,
-                }
-                
-                # If the card is associated with an issue or PR, include that info
-                if card.content_url:
-                    try:
-                        # Parse the content URL to determine if it's an issue or PR
-                        parts = card.content_url.split('/')
-                        if 'issues' in parts or 'pull' in parts:
-                            issue_number = int(parts[-1])
-                            issue = repository.get_issue(issue_number)
-                            card_data["content_type"] = "Issue" if issue.pull_request is None else "PullRequest"
-                            card_data["content"] = {
-                                "number": issue.number,
-                                "title": issue.title,
-                                "html_url": issue.html_url
-                            }
-                    except Exception as e:
-                        logger.warning(f"Could not fetch content for card {card.id}: {e}")
-                
-                cards.append(card_data)
-            
-            return cards
-        except GithubException as e:
-            logger.error(f"Failed to get cards for column {column_name} in project {project_number} in {owner}/{repo}: {e}")
-            raise
-    
-    def move_project_card(self, owner: str, repo: str, project_number: int, 
-                       card_id: int, target_column: str, position: str = "top") -> Dict[str, Any]:
-        """
-        Move a card to a different column in a project
+        Get cards (items) for a project with a specific status
+        
+        In the new Projects v2, items can have various fields, and one of these is typically
+        a status field that represents what was previously a column in classic Projects.
         
         Args:
             owner: Repository owner
             repo: Repository name
             project_number: Project number
-            card_id: ID of the card to move
-            target_column: Name of the destination column
-            position: Card position (top, bottom, or after:<card-id>)
+            status_name: Status name (like 'To Do', 'In Progress', 'Done')
         """
         try:
-            repository = self.client.get_repo(f"{owner}/{repo}")
-            project = None
+            # First get the project ID using GraphQL
+            result = self.graphql_client.list_repository_projects(owner, repo)
             
-            # Find the project with the specified number
-            for proj in repository.get_projects():
-                if proj.number == project_number:
-                    project = proj
-                    break
-            
-            if project is None:
-                raise ValueError(f"Project number {project_number} not found")
-            
-            # Find the target column with the specified name
-            target_col = None
-            for col in project.get_columns():
-                if col.name == target_column:
-                    target_col = col
-                    break
-            
-            if target_col is None:
-                raise ValueError(f"Column {target_column} not found in project {project_number}")
-            
-            # Find the card
-            card = None
-            for col in project.get_columns():
-                for c in col.get_cards():
-                    if c.id == card_id:
-                        card = c
+            project_id = None
+            project_title = None
+            if result.get('repository', {}).get('projectsV2', {}).get('nodes'):
+                for project in result['repository']['projectsV2']['nodes']:
+                    if project.get('number') == project_number:
+                        project_id = project.get('id')
+                        project_title = project.get('title')
                         break
-                if card:
-                    break
+                        
+            if not project_id:
+                raise ValueError(f"Project {project_number} not found in {owner}/{repo}")
             
-            if card is None:
-                raise ValueError(f"Card with ID {card_id} not found in project {project_number}")
+            # Get all items in the project
+            items_result = self.graphql_client.get_project_items(project_id)
             
-            # Move the card to the target column
-            result = card.move(position, target_col.id)
+            # Extract items that match the specified status
+            cards = []
+            if items_result.get('node', {}).get('items', {}).get('nodes'):
+                for item in items_result['node']['items']['nodes']:
+                    # Check if this item has the requested status
+                    status_field_value = None
+                    
+                    # Go through field values to find status fields
+                    if item.get('fieldValues', {}).get('nodes'):
+                        for field_value in item['fieldValues']['nodes']:
+                            # Look for the status field
+                            if field_value.get('field', {}).get('name') == 'Status' and field_value.get('name') == status_name:
+                                status_field_value = field_value.get('name')
+                                break
+                    
+                    # Only include items that have the requested status
+                    if status_field_value == status_name:
+                        # Get issue or PR data if content exists
+                        issue_data = None
+                        pr_data = None
+                        
+                        if item.get('content'):
+                            content = item['content']
+                            if 'Issue' in content.get('__typename', ''):
+                                issue_data = {
+                                    "number": content.get('number'),
+                                    "title": content.get('title'),
+                                    "state": content.get('state'),
+                                    "html_url": f"https://github.com/{owner}/{repo}/issues/{content.get('number')}"
+                                }
+                            elif 'PullRequest' in content.get('__typename', ''):
+                                pr_data = {
+                                    "number": content.get('number'),
+                                    "title": content.get('title'),
+                                    "state": content.get('state'),
+                                    "html_url": f"https://github.com/{owner}/{repo}/pull/{content.get('number')}"
+                                }
+                        
+                        cards.append({
+                            "id": item.get('id'),
+                            "note": None,  # Note is not available in Projects v2
+                            "created_at": None,  # Not directly available
+                            "updated_at": None,  # Not directly available
+                            "issue": issue_data,
+                            "pull_request": pr_data,
+                            "status": status_name
+                        })
+                
+            return cards
+        except Exception as e:
+            logger.error(f"Failed to get cards with status '{status_name}' in project {project_number}: {e}")
+            raise
+    
+    def move_project_card(self, owner: str, repo: str, project_number: int, 
+                       item_id: str, status_value: str, position: str = "top"):
+        """
+        Update an item's status in a project
+        
+        In Projects v2, instead of moving cards between columns, you update a status field.
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            project_number: Project number
+            item_id: Node ID of the project item
+            status_value: Status value to set
+            position: Position (not used in Projects v2, kept for API compatibility)
+        """
+        try:
+            # First get the project ID using GraphQL
+            result = self.graphql_client.list_repository_projects(owner, repo)
             
+            project_id = None
+            if result.get('repository', {}).get('projectsV2', {}).get('nodes'):
+                for project in result['repository']['projectsV2']['nodes']:
+                    if project.get('number') == project_number:
+                        project_id = project.get('id')
+                        break
+                        
+            if not project_id:
+                raise ValueError(f"Project {project_number} not found in {owner}/{repo}")
+                
+            # Get project fields to find the status field
+            fields_result = self.graphql_client.get_project_fields(project_id)
+            
+            status_field_id = None
+            status_options = {}
+            
+            if fields_result.get('node', {}).get('fields', {}).get('nodes'):
+                for field in fields_result['node']['fields']['nodes']:
+                    # Look for single select fields which are likely status fields
+                    if 'options' in field:
+                        # Typically the Status field would be named 'Status'
+                        if field.get('name') == 'Status':
+                            status_field_id = field.get('id')
+                            # Map option names to IDs
+                            for option in field.get('options', []):
+                                status_options[option.get('name')] = option.get('id')
+                            break
+            
+            if not status_field_id:
+                raise ValueError(f"Status field not found in project {project_number}")
+                
+            # Check if the requested status value exists
+            if status_value not in status_options:
+                raise ValueError(f"Status '{status_value}' not found in project {project_number}. Available statuses: {list(status_options.keys())}")
+                
+            # Update the item's status field
+            # In GraphQL, we need to provide a JSON-formatted string for single select fields
+            value = {"singleSelectOptionId": status_options[status_value]}
+            
+            result = self.graphql_client.update_project_item_field(
+                project_id=project_id,
+                item_id=item_id,
+                field_id=status_field_id,
+                value=value
+            )
+            
+            # Return success response
             return {
                 "success": True,
-                "card_id": card_id,
-                "target_column": target_column,
-                "position": position
+                "item_id": item_id,
+                "status": status_value,
+                "project_number": project_number
             }
-        except GithubException as e:
-            logger.error(f"Failed to move card {card_id} to {target_column} in project {project_number}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to update status to '{status_value}' for item {item_id}: {e}")
             raise
     
     # Issue label methods

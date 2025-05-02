@@ -27,9 +27,15 @@ It supports various GitHub operations and is designed to run in both standalone 
 - Docker support with configurable ports
 - Read-only mode option for restricted operations
 
-### GitHub Projects Note
+### GitHub Projects Implementation
 
-GitHub has deprecated the classic Projects API in favor of their new Projects experience. The MCP server includes code for working with classic Projects, but due to this deprecation, these features may not work with newer GitHub repositories. Future updates to this server may integrate with the new GitHub Projects API.
+GitHub has deprecated the classic Projects API in favor of their new Projects experience. This MCP server now uses GitHub's GraphQL API to interact with Projects v2, providing full support for the new Projects experience. This means:
+
+1. Project operations use GraphQL instead of REST API
+2. Instead of moving cards between columns, you now update a status field value
+3. Item IDs are GraphQL node IDs rather than numeric IDs
+
+The API methods maintain backwards compatibility with existing code while using the modern Projects v2 implementation behind the scenes.
 
 ## Installation
 
