@@ -1,0 +1,12 @@
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.4.2
+python-dotenv>=1.0.0
+jsonrpcserver>=5.0.9
+jsonrpcclient>=4.0.3
+pygithub>=2.1.1
+loguru>=0.7.2
+typer>=0.9.0
+python-json-logger>=2.0.7
+requests>=2.31.0
+aiohttp>=3.8.6
