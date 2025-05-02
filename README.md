@@ -16,9 +16,20 @@ It supports various GitHub operations and is designed to run in both standalone 
 - Standard I/O communication using JSON-RPC
 - REST API interface for HTTP communication
 - Configurable GitHub toolsets
+- Comprehensive capability advertising
+- Advanced GitHub integrations:
+  - Repository management
+  - Issue tracking with labels and comments
+  - Project management (see note on GitHub Projects below)
+  - Pull request operations
+  - Content management
 - Comprehensive logging
 - Docker support with configurable ports
 - Read-only mode option for restricted operations
+
+### GitHub Projects Note
+
+GitHub has deprecated the classic Projects API in favor of their new Projects experience. The MCP server includes code for working with classic Projects, but due to this deprecation, these features may not work with newer GitHub repositories. Future updates to this server may integrate with the new GitHub Projects API.
 
 ## Installation
 
@@ -83,6 +94,48 @@ GITHUB_ENABLE_COMMAND_LOGGING=false  # Optional: Log all commands
 GITHUB_TOOLSETS=all  # Optional: Comma-separated list of toolsets to enable
 GITHUB_DYNAMIC_TOOLSETS=false  # Optional: Enable dynamic toolsets
 ```
+
+### API Methods
+
+The GitHub MCP Server supports the following API methods:
+
+### Repository Operations
+- `repository.get` - Get repository details
+- `repository.list` - List repositories for a user or organization
+- `repository.list_branches` - List branches in a repository
+- `repository.get_branch` - Get details of a specific branch
+
+### Issue Management
+- `issue.get` - Get issue details
+- `issue.list` - List issues in a repository
+- `issue.create` - Create a new issue
+- `issue.update` - Update an existing issue
+- `issue.add_labels` - Add labels to an issue
+- `issue.remove_label` - Remove a label from an issue
+- `issue.comment` - Add a comment to an issue
+
+### Pull Request Operations
+- `pullrequest.get` - Get pull request details
+- `pullrequest.list` - List pull requests in a repository
+- `pullrequest.create` - Create a new pull request
+- `pullrequest.update` - Update an existing pull request
+- `pullrequest.merge` - Merge a pull request
+
+### Project Management
+- `projects.list` - List projects in a repository
+- `projects.get_columns` - Get columns in a project
+- `projects.get_cards` - Get cards in a project column
+- `projects.move_card` - Move a card to a different column or position
+
+### Content Operations
+- `content.get` - Get file contents
+- `content.create` - Create a file
+- `content.update` - Update file contents
+
+### User Management
+- `user.get` - Get user details
+- `user.list_followers` - List a user's followers
+- `user.list_following` - List users a user is following
 
 ### Running the Server
 

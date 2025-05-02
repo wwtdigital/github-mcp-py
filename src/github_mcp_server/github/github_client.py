@@ -225,6 +225,287 @@ class GitHubClient:
             logger.error(f"Failed to get issues for {owner}/{repo}: {e}")
             raise
     
+    # Project methods
+    def get_projects(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+        """
+        Get projects for a repository
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            projects = []
+            for project in repository.get_projects():
+                projects.append({
+                    "id": project.id,
+                    "name": project.name,
+                    "body": project.body,
+                    "number": project.number,
+                    "state": project.state,
+                    "html_url": project.html_url,
+                    "created_at": project.created_at.isoformat() if project.created_at else None,
+                    "updated_at": project.updated_at.isoformat() if project.updated_at else None
+                })
+            return projects
+        except GithubException as e:
+            logger.error(f"Failed to get projects for {owner}/{repo}: {e}")
+            raise
+    
+    def get_project_columns(self, owner: str, repo: str, project_number: int) -> List[Dict[str, Any]]:
+        """
+        Get columns for a project
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            project = None
+            
+            # Find the project with the specified number
+            for proj in repository.get_projects():
+                if proj.number == project_number:
+                    project = proj
+                    break
+            
+            if project is None:
+                raise ValueError(f"Project number {project_number} not found")
+            
+            columns = []
+            for column in project.get_columns():
+                columns.append({
+                    "id": column.id,
+                    "name": column.name,
+                    "created_at": column.created_at.isoformat() if column.created_at else None,
+                    "updated_at": column.updated_at.isoformat() if column.updated_at else None
+                })
+            return columns
+        except GithubException as e:
+            logger.error(f"Failed to get columns for project {project_number} in {owner}/{repo}: {e}")
+            raise
+    
+    def get_project_cards(self, owner: str, repo: str, project_number: int, column_name: str) -> List[Dict[str, Any]]:
+        """
+        Get cards for a project column
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            project = None
+            
+            # Find the project with the specified number
+            for proj in repository.get_projects():
+                if proj.number == project_number:
+                    project = proj
+                    break
+            
+            if project is None:
+                raise ValueError(f"Project number {project_number} not found")
+            
+            # Find the column with the specified name
+            column = None
+            for col in project.get_columns():
+                if col.name == column_name:
+                    column = col
+                    break
+            
+            if column is None:
+                raise ValueError(f"Column {column_name} not found in project {project_number}")
+            
+            cards = []
+            for card in column.get_cards():
+                card_data = {
+                    "id": card.id,
+                    "note": card.note,
+                    "created_at": card.created_at.isoformat() if card.created_at else None,
+                    "updated_at": card.updated_at.isoformat() if card.updated_at else None,
+                }
+                
+                # If the card is associated with an issue or PR, include that info
+                if card.content_url:
+                    try:
+                        # Parse the content URL to determine if it's an issue or PR
+                        parts = card.content_url.split('/')
+                        if 'issues' in parts or 'pull' in parts:
+                            issue_number = int(parts[-1])
+                            issue = repository.get_issue(issue_number)
+                            card_data["content_type"] = "Issue" if issue.pull_request is None else "PullRequest"
+                            card_data["content"] = {
+                                "number": issue.number,
+                                "title": issue.title,
+                                "html_url": issue.html_url
+                            }
+                    except Exception as e:
+                        logger.warning(f"Could not fetch content for card {card.id}: {e}")
+                
+                cards.append(card_data)
+            
+            return cards
+        except GithubException as e:
+            logger.error(f"Failed to get cards for column {column_name} in project {project_number} in {owner}/{repo}: {e}")
+            raise
+    
+    def move_project_card(self, owner: str, repo: str, project_number: int, 
+                       card_id: int, target_column: str, position: str = "top") -> Dict[str, Any]:
+        """
+        Move a card to a different column in a project
+        
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            project_number: Project number
+            card_id: ID of the card to move
+            target_column: Name of the destination column
+            position: Card position (top, bottom, or after:<card-id>)
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            project = None
+            
+            # Find the project with the specified number
+            for proj in repository.get_projects():
+                if proj.number == project_number:
+                    project = proj
+                    break
+            
+            if project is None:
+                raise ValueError(f"Project number {project_number} not found")
+            
+            # Find the target column with the specified name
+            target_col = None
+            for col in project.get_columns():
+                if col.name == target_column:
+                    target_col = col
+                    break
+            
+            if target_col is None:
+                raise ValueError(f"Column {target_column} not found in project {project_number}")
+            
+            # Find the card
+            card = None
+            for col in project.get_columns():
+                for c in col.get_cards():
+                    if c.id == card_id:
+                        card = c
+                        break
+                if card:
+                    break
+            
+            if card is None:
+                raise ValueError(f"Card with ID {card_id} not found in project {project_number}")
+            
+            # Move the card to the target column
+            result = card.move(position, target_col.id)
+            
+            return {
+                "success": True,
+                "card_id": card_id,
+                "target_column": target_column,
+                "position": position
+            }
+        except GithubException as e:
+            logger.error(f"Failed to move card {card_id} to {target_column} in project {project_number}: {e}")
+            raise
+    
+    # Issue label methods
+    def get_labels(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+        """
+        Get labels for a repository
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            labels = []
+            for label in repository.get_labels():
+                labels.append({
+                    "name": label.name,
+                    "color": label.color,
+                    "description": label.description,
+                    "url": label.url
+                })
+            return labels
+        except GithubException as e:
+            logger.error(f"Failed to get labels for {owner}/{repo}: {e}")
+            raise
+    
+    def add_issue_labels(self, owner: str, repo: str, issue_number: int, labels: List[str]) -> List[Dict[str, Any]]:
+        """
+        Add labels to an issue
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            issue = repository.get_issue(issue_number)
+            added_labels = issue.add_to_labels(*labels)
+            
+            result = []
+            for label in added_labels:
+                result.append({
+                    "name": label.name,
+                    "color": label.color,
+                    "description": label.description,
+                    "url": label.url
+                })
+            return result
+        except GithubException as e:
+            logger.error(f"Failed to add labels to issue {issue_number} in {owner}/{repo}: {e}")
+            raise
+    
+    def remove_issue_label(self, owner: str, repo: str, issue_number: int, label: str) -> bool:
+        """
+        Remove a label from an issue
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            issue = repository.get_issue(issue_number)
+            issue.remove_from_labels(label)
+            return True
+        except GithubException as e:
+            logger.error(f"Failed to remove label {label} from issue {issue_number} in {owner}/{repo}: {e}")
+            raise
+    
+    # Issue comment methods
+    def get_issue_comments(self, owner: str, repo: str, issue_number: int) -> List[Dict[str, Any]]:
+        """
+        Get comments for an issue
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            issue = repository.get_issue(issue_number)
+            comments = []
+            for comment in issue.get_comments():
+                comments.append({
+                    "id": comment.id,
+                    "body": comment.body,
+                    "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                    "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+                    "user": {
+                        "login": comment.user.login,
+                        "id": comment.user.id,
+                        "avatar_url": comment.user.avatar_url
+                    }
+                })
+            return comments
+        except GithubException as e:
+            logger.error(f"Failed to get comments for issue {issue_number} in {owner}/{repo}: {e}")
+            raise
+    
+    def add_issue_comment(self, owner: str, repo: str, issue_number: int, body: str) -> Dict[str, Any]:
+        """
+        Add a comment to an issue
+        """
+        try:
+            repository = self.client.get_repo(f"{owner}/{repo}")
+            issue = repository.get_issue(issue_number)
+            comment = issue.create_comment(body)
+            
+            return {
+                "id": comment.id,
+                "body": comment.body,
+                "created_at": comment.created_at.isoformat() if comment.created_at else None,
+                "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
+                "user": {
+                    "login": comment.user.login,
+                    "id": comment.user.id,
+                    "avatar_url": comment.user.avatar_url
+                }
+            }
+        except GithubException as e:
+            logger.error(f"Failed to add comment to issue {issue_number} in {owner}/{repo}: {e}")
+            raise
+
     def create_issue(
         self, 
         owner: str, 

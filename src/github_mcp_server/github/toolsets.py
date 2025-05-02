@@ -20,6 +20,7 @@ TOOLSETS = {
     "pullrequest": "Pull request management tools",
     "user": "User management tools",
     "content": "Content management tools",
+    "projects": "Project management tools",
     "context": "Context tools",
 }
 
@@ -210,6 +211,36 @@ class IssueToolset(GithubToolset):
                     assignees=assignees
                 )
             server.register_command("issue.create", create_issue)
+            
+            # Register issue.add_labels
+            async def add_issue_labels(owner: str, repo: str, issue_number: int, labels: List[str]):
+                return self.github_client.add_issue_labels(
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    labels=labels
+                )
+            server.register_command("issue.add_labels", add_issue_labels)
+            
+            # Register issue.remove_label
+            async def remove_issue_label(owner: str, repo: str, issue_number: int, label: str):
+                return self.github_client.remove_issue_label(
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    label=label
+                )
+            server.register_command("issue.remove_label", remove_issue_label)
+            
+            # Register issue.comment
+            async def add_issue_comment(owner: str, repo: str, issue_number: int, body: str):
+                return self.github_client.add_issue_comment(
+                    owner=owner,
+                    repo=repo,
+                    issue_number=issue_number,
+                    body=body
+                )
+            server.register_command("issue.comment", add_issue_comment)
 
 
 class PullRequestToolset(GithubToolset):
@@ -286,6 +317,80 @@ class ContentToolset(GithubToolset):
                 ref=ref
             )
         server.register_command("content.get", get_content)
+
+
+class ProjectsToolset(GithubToolset):
+    """
+    Project management toolset
+    """
+    
+    def __init__(self, github_client: GitHubClient, read_only: bool = False):
+        """
+        Initialize projects toolset
+        """
+        super().__init__(
+            name="projects",
+            description="Project management tools",
+            github_client=github_client,
+            read_only=read_only
+        )
+        
+        # Add projects tools
+        self.add_tool(Tool(
+            name="projects.list",
+            description="List projects for a repository"
+        ))
+        
+        self.add_tool(Tool(
+            name="projects.get_columns",
+            description="Get columns for a project"
+        ))
+        
+        self.add_tool(Tool(
+            name="projects.get_cards",
+            description="Get cards for a project column"
+        ))
+        
+        # Add write operations if not in read-only mode
+        if not read_only:
+            self.add_tool(Tool(
+                name="projects.move_card",
+                description="Move a card to a different column in a project"
+            ))
+    
+    def register_tools(self, server) -> None:
+        """
+        Register projects tools with the server
+        """
+        # Register projects.list
+        async def list_projects(owner: str, repo: str):
+            return self.github_client.get_projects(owner, repo)
+        server.register_command("projects.list", list_projects)
+        
+        # Register projects.get_columns
+        async def get_project_columns(owner: str, repo: str, project_number: int):
+            return self.github_client.get_project_columns(owner, repo, project_number)
+        server.register_command("projects.get_columns", get_project_columns)
+        
+        # Register projects.get_cards
+        async def get_project_cards(owner: str, repo: str, project_number: int, column_name: str):
+            return self.github_client.get_project_cards(owner, repo, project_number, column_name)
+        server.register_command("projects.get_cards", get_project_cards)
+        
+        # Register write operations if not in read-only mode
+        if not self.read_only:
+            # Register projects.move_card
+            async def move_project_card(owner: str, repo: str, project_number: int, 
+                                   card_id: int, target_column: str, position: str = "top"):
+                return self.github_client.move_project_card(
+                    owner=owner,
+                    repo=repo,
+                    project_number=project_number,
+                    card_id=card_id,
+                    target_column=target_column,
+                    position=position
+                )
+            server.register_command("projects.move_card", move_project_card)
 
 
 class UserToolset(GithubToolset):
@@ -394,6 +499,10 @@ def init_toolsets(
     # Initialize user toolset
     if enable_all or "user" in enabled_toolsets:
         toolsets.append(UserToolset(github_client, read_only))
+    
+    # Initialize projects toolset
+    if enable_all or "projects" in enabled_toolsets:
+        toolsets.append(ProjectsToolset(github_client, read_only))
     
     return toolsets
 
